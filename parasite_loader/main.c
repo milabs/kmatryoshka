@@ -2,10 +2,17 @@
 #include <linux/module.h>
 #include <linux/uaccess.h>
 #include <linux/kallsyms.h>
+#include <linux/version.h>
 
 #ifndef user_addr_max
-# define user_addr_max()	(current_thread_info()->addr_limit.seg)
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(4,8,0)
+		# define user_addr_max()      (current_thread_info()->addr_limit.seg)
+	#else
+		# define user_addr_max() (current->thread.addr_limit.seg)
+	#endif
 #endif
+
+
 
 #include "encrypt/encrypt.h"
 
